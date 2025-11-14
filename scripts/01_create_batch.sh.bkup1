@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# MENU_SHOW: yes
+# MENU_SECTION: main
+# MENU_POSITION: 2
+# MENU_NAME: Create Batch
+# MENU_DESC: Create a single batch from SOURCE_DIR into BATCH_DIR (size or count)
+# MENU_HELP: Builds a batch folder, deduplicates using DB (hybrid hash head+tail+size),
+#           copies files into batch directory, and records entries into DB.
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../05_config.sh"
+
+LOG="$LOG_DIR/create_batch.log"
+mkdir -p "$LOG_DIR"
+
+_init_db() {
+  "$SCRIPT_DIR/_init_sqlite.sh"
+}
+
+log(){ echo "$(date --iso-8601=seconds) - $*" | tee -a "$LOG"; }
+
+# Hybrid hash: size + head + tail
+compute_hybrid_hash() {
+  local file="$1"
+  local hdr_bytes="$HASH_HEAD_TAIL_BYTES"
+  local tmp
+  tmp="$(mktemp)"
+  # write size
+  stat -c%s "$file" >> "$tmp"
+  # head
+  dd if="$file" bs=1 count="$hdr_bytes" 2>/dev/null >> "$tmp" || true
+  # tail (if bigger)
+  size_bytes=$(stat -c%s "$file")
+  if [ "$size_bytes" -gt "$hdr_bytes" ]; then
+    tail -c "$hdr_bytes" "$file" 2>/dev/null >> "$tmp" || true
+  fi
+  sha256sum "$tmp" | awk '{print $1}'
+  rm -f "$tmp"
+}
+
+# safe insertion to sqlite
+db_insert_file() {
+  local path="$1"; local name="$2"; local size="$3"; local hash="$4"; local batch="$5"
+  "$SQLITE3_BIN" "$DB_PATH" "INSERT OR IGNORE INTO files (file_path,file_name,size_bytes,hash,batch_id) VALUES ('$(echo "$path" | sed "s/'/''/g")','$(echo "$name" | sed "s/'/''/g")',$size,'$hash','$batch');"
+}
+
+_init_db
+
+# make workdir
+batch_id="batch-$(date +%Y%m%d%H%M%S)"
+workdir="$BATCH_DIR/$batch_id"
+mkdir -p "$workdir"
+log "Creating batch in $workdir"
+
+current_bytes=0
+current_count=0
+
+# find files
+while IFS= read -r -d '' file; do
+  # stop conditions: file count if >0 OR size if >0
+  if [ "$BATCH_FILE_COUNT" -gt 0 ] && [ "$current_count" -ge "$BATCH_FILE_COUNT" ]; then
+    log "Batch file count reached: $current_count"
+    break
+  fi
+  if [ "$BATCH_SIZE_GB" -gt 0 ] && [ "$current_bytes" -ge $((BATCH_SIZE_GB * 1024 * 1024 * 1024)) ]; then
+    log "Batch size reached: $current_bytes bytes"
+    break
+  fi
+
+  # quick skip if file already in DB by path
+  if "$SQLITE3_BIN" "$DB_PATH" "SELECT 1 FROM files WHERE file_path = '$(echo "$file" | sed "s/'/''/g")' LIMIT 1;" | grep -q 1; then
+    log "Skipping (already processed): $file"
+    continue
+  fi
+
+  size_bytes=$(stat -c%s "$file")
+  name=$(basename "$file")
+
+  log "Hashing: $file (size $size_bytes)"
+  hash=$(compute_hybrid_hash "$file")
+
+  # check for existing hash
+  existing="$($SQLITE3_BIN "$DB_PATH" "SELECT file_path FROM files WHERE hash = '$hash' LIMIT 1;")" || true
+  if [ -n "$existing" ]; then
+    log "Duplicate detected, skipping: $file (matches: $existing)"
+    db_insert_file "$file" "$name" "$size_bytes" "$hash" "$batch_id"
+    continue
+  fi
+
+  # copy into batch
+  dest="$workdir/$name"
+  mkdir -p "$(dirname "$dest")"
+  if [ "$DRY_RUN" = false ]; then
+    $CP_CMD "$file" "$dest"
+  else
+    log "DRY RUN - would copy $file -> $dest"
+  fi
+
+  db_insert_file "$file" "$name" "$size_bytes" "$hash" "$batch_id"
+  current_bytes=$((current_bytes + size_bytes))
+  current_count=$((current_count + 1))
+done < <(find "$SOURCE_DIR" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.mp4' -o -iname '*.mov' -o -iname '*.heic' -o -iname '*.avi' \) -print0)
+
+log "Batch created: id=$batch_id size=$current_bytes files=$current_count"
+echo "$workdir"
