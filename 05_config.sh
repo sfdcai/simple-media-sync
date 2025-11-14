@@ -35,12 +35,23 @@ DRY_RUN=false          # set to true for dry-run (no copies/moves)
 # Hashing config (hybrid mode): size of head/tail in bytes
 HASH_HEAD_TAIL_BYTES=$((5 * 1024 * 1024))  # 5MB head + 5MB tail
 
-# Syncthing REST API
+# Transfer orchestration (syncthing or scp)
+TRANSFER_METHOD="syncthing"   # accepted values: "syncthing" or "scp"
+
+# Syncthing REST API (used when TRANSFER_METHOD="syncthing")
 ST_URL="http://192.168.1.102:8384/rest"
 ST_API_KEY="yEPu9sGF3mvg2pMDDG3mdsTrWWpW9y33"
 ST_FOLDER_ID="1rnqu-tho7f"   # syncthing folder ID for the BATCH_DIR
 ST_POLL_INTERVAL=10          # seconds between checks
 ST_POLL_TIMEOUT=3600         # seconds to give a folder to finish syncing
+
+# SCP transfer configuration (used when TRANSFER_METHOD="scp")
+SCP_USER="android"
+SCP_HOST="192.168.1.150"
+SCP_PORT=8022
+SCP_REMOTE_PATH="/sdcard/DCIM/MediaBatch"
+# optional identity file for key-based auth (leave empty to use default agent/ssh config)
+SCP_IDENTITY_FILE=""
 
 # SQLite Web UI Port (optional, but safe default)
 SQLITE_WEB_PORT=4000

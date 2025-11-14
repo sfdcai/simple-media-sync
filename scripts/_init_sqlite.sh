@@ -17,6 +17,8 @@ if [ ! -f "$DB_PATH" ]; then
 BEGIN;
 CREATE TABLE IF NOT EXISTS files (
   id INTEGER PRIMARY KEY,
+  source_path TEXT,
+  batch_path TEXT,
   file_path TEXT UNIQUE,
   file_name TEXT,
   size_bytes INTEGER,
@@ -25,6 +27,8 @@ CREATE TABLE IF NOT EXISTS files (
   batch_id TEXT,
   synced INTEGER DEFAULT 0,
   archived INTEGER DEFAULT 0,
+  archived_at DATETIME,
+  archived_path TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_hash ON files(hash);

@@ -50,6 +50,8 @@ log "Setting up SQLite DB..."
 sqlite3 "$DB_PATH" <<EOF
 CREATE TABLE IF NOT EXISTS files (
   id INTEGER PRIMARY KEY,
+  source_path TEXT,
+  batch_path TEXT,
   file_path TEXT UNIQUE,
   file_name TEXT,
   size_bytes INTEGER,
@@ -58,11 +60,21 @@ CREATE TABLE IF NOT EXISTS files (
   batch_id TEXT,
   synced INTEGER DEFAULT 0,
   archived INTEGER DEFAULT 0,
+  archived_at DATETIME,
+  archived_path TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_hash ON files(hash);
 CREATE INDEX IF NOT EXISTS idx_archived ON files(archived);
 EOF
+
+# bring legacy databases up-to-date
+for col in "source_path TEXT" "batch_path TEXT" "exif_date TEXT" "archived_at DATETIME" "archived_path TEXT"; do
+  name=${col%% *}
+  if ! sqlite3 "$DB_PATH" "PRAGMA table_info(files);" | awk -F'|' '{print $2}' | grep -qx "$name"; then
+    sqlite3 "$DB_PATH" "ALTER TABLE files ADD COLUMN $col;" || log "Failed to add column $col"
+  fi
+done
 
 # Find free port
 for port in 3000 4000 5000 6000 7000 8000 8080 9000; do
@@ -108,4 +120,4 @@ echo "📌 Debug Log: $DEBUG_LOG"
 echo ""
 echo "Run next: ./04_menu.sh"
 echo ""
-tail -n 200 -f "$DEBUG_LOG"
+echo "To follow future setup logs run: tail -f $DEBUG_LOG"

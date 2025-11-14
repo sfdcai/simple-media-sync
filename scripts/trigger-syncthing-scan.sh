@@ -17,6 +17,11 @@ mkdir -p "$LOG_DIR"
 echo "[$(date)] 🚀 Triggering Syncthing scan for folder: $ST_FOLDER_ID" | tee -a "$LOG"
 
 # === Validate config values ===
+if [[ "${TRANSFER_METHOD:-syncthing}" != "syncthing" ]]; then
+  echo "Syncthing transfer disabled via TRANSFER_METHOD=$TRANSFER_METHOD" | tee -a "$LOG"
+  exit 0
+fi
+
 [[ -z "$ST_URL" || -z "$ST_API_KEY" || -z "$ST_FOLDER_ID" ]] && {
   echo "❌ Syncthing config missing in 05_config.sh" | tee -a "$LOG"
   exit 1
@@ -38,7 +43,7 @@ echo "⏳ Monitoring scan progress..." | tee -a "$LOG"
 while true; do
   STATUS=$(curl -s -H "X-API-Key: $ST_API_KEY" "$ST_URL/db/status?folder=$ST_FOLDER_ID")
   STATE=$(echo "$STATUS" | jq -r '.state')
-  NEED=$(echo "$STATUS" | jq -r '.needFiles')
+  NEED=$(echo "$STATUS" | jq -r '.needFiles // 0')
   echo "  → State: $STATE | Pending files: $NEED"
 
   if [[ "$STATE" == "idle" && "$NEED" == "0" ]]; then
