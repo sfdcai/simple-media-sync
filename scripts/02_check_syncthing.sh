@@ -14,6 +14,11 @@ LOG="$LOG_DIR/syncthing_check.log"
 mkdir -p "$LOG_DIR"
 log() { echo "$(date --iso-8601=seconds) - $*" | tee -a "$LOG"; }
 
+if [[ "${TRANSFER_METHOD:-syncthing}" != "syncthing" ]]; then
+  log "Syncthing transfer disabled via TRANSFER_METHOD=$TRANSFER_METHOD"
+  exit 0
+fi
+
 # validate syncthing reachable
 if ! curl -s -H "X-API-Key: $ST_API_KEY" "$ST_URL/system/status" >/dev/null; then
   log "ERROR: Syncthing unreachable or invalid API key (try curl -H 'X-API-Key:...' $ST_URL/system/status)"
@@ -41,7 +46,7 @@ start=$(date +%s)
 while true; do
   json=$(curl -s -H "X-API-Key: $ST_API_KEY" "$ST_URL/db/status?folder=$ST_FOLDER_ID" || echo "{}")
 
-  need=$(echo "$json" | jq -r '.needTotalItems // -1')
+  need=$(echo "$json" | jq -r '.needTotalItems // 0')
   state=$(echo "$json" | jq -r '.state // "unknown"')
   errors=$(echo "$json" | jq -r '.errors // 0')
 

@@ -61,15 +61,35 @@ log "🎯 Target batch size: ${BATCH_SIZE_GB}GB ($SIZE_LIMIT_BYTES bytes) | DRY_
 # Ensure files table exists minimally (if not present, create a simple structure)
 "$SQLITE_BIN" "$DB_PATH" "CREATE TABLE IF NOT EXISTS files (
   id INTEGER PRIMARY KEY,
+  source_path TEXT,
+  batch_path TEXT,
   file_path TEXT UNIQUE,
   file_name TEXT,
   size_bytes INTEGER,
   hash TEXT,
+  exif_date TEXT,
   batch_id TEXT,
-  archived INTEGER DEFAULT 0,
   synced INTEGER DEFAULT 0,
+  archived INTEGER DEFAULT 0,
+  archived_at DATETIME,
+  archived_path TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );" >/dev/null 2>&1
+
+# Ensure required columns exist for legacy databases
+ensure_column() {
+  local table="$1" column="$2" definition="$3"
+  if ! "$SQLITE_BIN" "$DB_PATH" "PRAGMA table_info($table);" | awk -F'|' '{print $2}' | grep -qx "$column"; then
+    "$SQLITE_BIN" "$DB_PATH" "ALTER TABLE $table ADD COLUMN $definition;" >/dev/null 2>&1 || \
+      log "${C3}⚠ Failed to add column $column to $table${CR}"
+  fi
+}
+
+ensure_column files source_path "TEXT"
+ensure_column files batch_path "TEXT"
+ensure_column files exif_date "TEXT"
+ensure_column files archived_at "DATETIME"
+ensure_column files archived_path "TEXT"
 
 # Hybrid hash function (head + tail + size)
 compute_hybrid_hash() {
@@ -102,12 +122,13 @@ db_has_hash() {
 
 # Insert into files table
 db_insert_file() {
-  local fpath="$1" fname="$2" fsize="$3" fhash="$4" fbatch="$5"
+  local src_path="$1" batch_path="$2" fname="$3" fsize="$4" fhash="$5" fbatch="$6"
   # escape single quotes for sqlite
-  fpath=$(printf "%s" "$fpath" | sed "s/'/''/g")
+  src_path=$(printf "%s" "$src_path" | sed "s/'/''/g")
+  batch_path=$(printf "%s" "$batch_path" | sed "s/'/''/g")
   fname=$(printf "%s" "$fname" | sed "s/'/''/g")
-  "$SQLITE_BIN" "$DB_PATH" "INSERT OR IGNORE INTO files (file_path,file_name,size_bytes,hash,batch_id,archived,synced)
-  VALUES ('$fpath','$fname',$fsize,'$fhash','$fbatch',0,0);"
+  "$SQLITE_BIN" "$DB_PATH" "INSERT OR IGNORE INTO files (source_path,batch_path,file_path,file_name,size_bytes,hash,batch_id,archived,synced)
+  VALUES ('$src_path','$batch_path','$batch_path','$fname',$fsize,'$fhash','$fbatch',0,0);"
 }
 
 # Move skipped files (ext, name, path, dupe)
@@ -243,7 +264,7 @@ while IFS= read -r -d '' file; do
 
   # Insert into DB
   if [[ "$DRY_RUN" == "false" ]]; then
-    db_insert_file "$file" "$name" "$size" "$hash" "$batch_id"
+    db_insert_file "$file" "$dest" "$name" "$size" "$hash" "$batch_id"
     # update counts
     current_bytes=$((current_bytes + size))
     current_count=$((current_count + 1))

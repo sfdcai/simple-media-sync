@@ -30,6 +30,10 @@ detect_sqlite_web_port() {
 }
 
 syncthing_status() {
+  if [[ "${TRANSFER_METHOD:-syncthing}" != "syncthing" ]]; then
+    echo "DISABLED"
+    return
+  fi
   if [[ -z "${ST_API_KEY:-}" || -z "${ST_URL:-}" || -z "${ST_FOLDER_ID:-}" ]]; then
     echo "ST CONFIG MISSING"
     return
@@ -58,6 +62,7 @@ CORE_MAP[1]="scripts/01_create_batch.sh"
 CORE_MAP[2]="scripts/trigger-syncthing-scan.sh"
 CORE_MAP[3]="scripts/02_check_syncthing.sh"
 CORE_MAP[4]="scripts/03_archive_sorted.sh"
+CORE_MAP[5]="scripts/trigger-scp-transfer.sh"
 
 # dynamic plugin collection ------------------------------------------------
 # plugin files live in ./scripts and have headers:
@@ -156,6 +161,7 @@ while true; do
   echo "CORE OPERATIONS"
 for idx in $(printf "%s\n" "${!CORE_MAP[@]}" | sort -n); do
   item="${CORE_MAP[$idx]:-}"
+  [[ -z "$item" ]] && continue
   if [[ -f "$item" ]]; then
     name=$(grep -m1 -i "^# MENU_NAME:" "$item" 2>/dev/null || true)
     name=${name#*MENU_NAME:}
@@ -199,7 +205,8 @@ done
     composite=()
     # core
     for idx in $(printf "%s\n" "${!CORE_MAP[@]}" | sort -n); do
-      item="${CORE_MAP[$idx]}"
+      item="${CORE_MAP[$idx]:-}"
+      [[ -z "$item" ]] && continue
       label=$(grep -m1 -i "^# MENU_NAME:" "$item" 2>/dev/null || true); label=${label#*MENU_NAME:}; label=$(echo "$label" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
       [[ -z "$label" ]] && label=$(basename "$item")
       composite+=("$(printf "%2d" "$idx") ) $label")
@@ -226,8 +233,16 @@ done
 
   # core 1..6
   if (( choice_num >= 1 && choice_num <= 6 )); then
-    script="${CORE_MAP[$choice_num]}"
-    if [[ -f "$script" ]]; then run_and_wait "$script"; else echo "Script missing: $script"; read -rp "Press ENTER..."; fi
+    script="${CORE_MAP[$choice_num]:-}"
+    if [[ -z "$script" ]]; then
+      echo "No script mapped to slot $choice_num"
+      read -rp "Press ENTER..."
+    elif [[ -f "$script" ]]; then
+      run_and_wait "$script"
+    else
+      echo "Script missing: $script"
+      read -rp "Press ENTER..."
+    fi
     echo "------------------ Returning to menu ------------------"
     continue
   fi
@@ -247,26 +262,44 @@ done
   if (( choice_num == INFO_IDX )); then
     # pick a script to show info
     alllist=()
-    for idx in $(seq 1 6); do alllist+=("$(printf "%2d" "$idx") ) $(grep -m1 -i "^# MENU_NAME:" "${CORE_MAP[$idx]}" 2>/dev/null || basename "${CORE_MAP[$idx]}")"); done
+    for idx in $(printf "%s\n" "${!CORE_MAP[@]}" | sort -n); do
+      item="${CORE_MAP[$idx]:-}"
+      [[ -z "$item" ]] && continue
+      label=$(grep -m1 -i "^# MENU_NAME:" "$item" 2>/dev/null || true)
+      label=${label#*MENU_NAME:}
+      label=$(echo "$label" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+      [[ -z "$label" ]] && label=$(basename "$item")
+      alllist+=("$(printf "%2d" "$idx") ) $label")
+    done
     base=$((6+1))
     for i in "${!PLUGIN_LABELS[@]}"; do num=$((base+i)); alllist+=("$(printf "%2d" "$num") ) ${PLUGIN_LABELS[$i]}"); done
     sel=$(printf "%s\n" "${alllist[@]}" | fzf --prompt="Select script for info > ")
     [[ -z "$sel" ]] && continue
     selnum=$(echo "$sel" | awk -F')' '{print $1}' | tr -d '[:space:]')
-    if (( selnum >=1 && selnum <=6 )); then file="${CORE_MAP[$selnum]}"; else idx=$((selnum - plugin_start)); file="${PLUGIN_FILES[$idx]}"; fi
+    if (( selnum >=1 && selnum <=6 )); then file="${CORE_MAP[$selnum]:-}"; else idx=$((selnum - plugin_start)); file="${PLUGIN_FILES[$idx]}"; fi
+    [[ -z "$file" ]] && { echo "No script mapped"; read -rp "Press ENTER..."; continue; }
     echo; echo "Script: $file"; grep -E "^# MENU_" "$file" 2>/dev/null || echo "(no MENU_ headers)"; read -rp "Press ENTER..."; continue
   fi
 
   if (( choice_num == HELP_IDX )); then
     # similar select
     alllist=()
-    for idx in $(seq 1 6); do alllist+=("$(printf "%2d" "$idx") ) $(grep -m1 -i "^# MENU_NAME:" "${CORE_MAP[$idx]}" 2>/dev/null || basename "${CORE_MAP[$idx]}")"); done
+    for idx in $(printf "%s\n" "${!CORE_MAP[@]}" | sort -n); do
+      item="${CORE_MAP[$idx]:-}"
+      [[ -z "$item" ]] && continue
+      label=$(grep -m1 -i "^# MENU_NAME:" "$item" 2>/dev/null || true)
+      label=${label#*MENU_NAME:}
+      label=$(echo "$label" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+      [[ -z "$label" ]] && label=$(basename "$item")
+      alllist+=("$(printf "%2d" "$idx") ) $label")
+    done
     base=$((6+1))
     for i in "${!PLUGIN_LABELS[@]}"; do num=$((base+i)); alllist+=("$(printf "%2d" "$num") ) ${PLUGIN_LABELS[$i]}"); done
     sel=$(printf "%s\n" "${alllist[@]}" | fzf --prompt="Select script for help > ")
     [[ -z "$sel" ]] && continue
     selnum=$(echo "$sel" | awk -F')' '{print $1}' | tr -d '[:space:]')
-    if (( selnum >=1 && selnum <=6 )); then file="${CORE_MAP[$selnum]}"; else idx=$((selnum - plugin_start)); file="${PLUGIN_FILES[$idx]}"; fi
+    if (( selnum >=1 && selnum <=6 )); then file="${CORE_MAP[$selnum]:-}"; else idx=$((selnum - plugin_start)); file="${PLUGIN_FILES[$idx]}"; fi
+    [[ -z "$file" ]] && { echo "No script mapped"; read -rp "Press ENTER..."; continue; }
     echo; sed -n '1,200p' "$file"; read -rp "Press ENTER..."; continue
   fi
 
